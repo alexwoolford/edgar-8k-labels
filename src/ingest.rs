@@ -166,36 +166,55 @@ fn resolve_filing(
 
     if txt.status == 200 {
         let items = parse_items(&txt.body);
-        filing.items = join_items(&items);
-        filing.source = "txt".into();
-        stats.txt_ok += 1;
-        return Ok(Some(filing));
-    }
-    if txt.status != 403 && txt.status != 404 {
+        if !items.is_empty() {
+            filing.items = join_items(&items);
+            filing.source = "txt".into();
+            stats.txt_ok += 1;
+            return Ok(Some(filing));
+        }
+    } else if txt.status != 403 && txt.status != 404 {
         anyhow::bail!("filing HTTP {} for {url}", txt.status);
     }
 
-    let json = if let Some(cached) = submissions_cache.get(&row.cik) {
-        cached.clone()
-    } else {
-        let sub_url = submissions_url(&row.cik);
-        let resp = fetcher.get(&sub_url)?;
-        if resp.status != 200 {
-            anyhow::bail!("submissions HTTP {} for {sub_url}", resp.status);
-        }
-        submissions_cache.insert(row.cik.clone(), resp.body.clone());
-        resp.body
-    };
-    match submissions::items_for_accession(&json, &accession)? {
-        submissions::AccessionItems::Present(items) => {
+    match submissions_items(fetcher, submissions_cache, &row.cik, &accession)? {
+        Some(items) => {
             filing.items = items;
             filing.source = "submissions_json".into();
             stats.submissions_fallback += 1;
             Ok(Some(filing))
         }
-        submissions::AccessionItems::Missing => {
-            anyhow::bail!("accession {accession} not in submissions recent")
+        None if txt.status == 200 => {
+            // Header had no `<ITEMS>` / mappable ITEM INFORMATION; recent JSON
+            // does not list this accession. Keep the filing, do not guess codes.
+            filing.items = None;
+            filing.source = "txt".into();
+            stats.txt_ok += 1;
+            Ok(Some(filing))
         }
+        None => anyhow::bail!("accession {accession} not in submissions recent"),
+    }
+}
+
+fn submissions_items(
+    fetcher: &mut dyn Fetcher,
+    cache: &mut HashMap<String, String>,
+    cik: &str,
+    accession: &str,
+) -> Result<Option<Option<String>>> {
+    let json = if let Some(cached) = cache.get(cik) {
+        cached.clone()
+    } else {
+        let sub_url = submissions_url(cik);
+        let resp = fetcher.get(&sub_url)?;
+        if resp.status != 200 {
+            anyhow::bail!("submissions HTTP {} for {sub_url}", resp.status);
+        }
+        cache.insert(cik.to_string(), resp.body.clone());
+        resp.body
+    };
+    match submissions::items_for_accession(&json, accession)? {
+        submissions::AccessionItems::Present(items) => Ok(Some(items)),
+        submissions::AccessionItems::Missing => Ok(None),
     }
 }
 

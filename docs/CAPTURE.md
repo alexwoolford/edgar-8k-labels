@@ -19,7 +19,7 @@ Pin: `capturable-state` git tag `v0.1.1` (not a path dep; do not copy `src/*.rs`
 
 Identity: accession is stable (P1). Filings are insert-once; an identical rerun must not emit a new outbox row (`ON CONFLICT … WHERE` any column differs). An 8-K/A is a **new** accession. Soft-delete unused in v1.
 
-`items` is comma-separated TEXT, sorted unique (`1.01,2.01`). Empty → SQL NULL. Do not guess. Mosaic unnests with `string_to_array`.
+`items` is comma-separated TEXT, sorted unique (`1.01,2.01`). Empty → SQL NULL. Do not guess. Mosaic unnests with `string_to_array`. Complete-submission `.txt` headers usually have `ITEM INFORMATION:` titles (mapped from the Form 8-K table) rather than `<ITEMS>N.NN`. Body HTML is not parsed. If the header yields no codes, fall back to `data.sec.gov/submissions` `items` (same as a `.txt` 403).
 
 These are **labels**, not leads. Item 2.01 is the disclosure, not a mosaic-generated signal.
 
