@@ -1,0 +1,21 @@
+[Unit]
+Description=EDGAR 8-K item labels daily ingest
+Documentation=file:///opt/edgar-8k-labels/docs/DAILY_OPS.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=edgar
+Group=edgar
+Nice=10
+EnvironmentFile=-/opt/edgar-8k-labels/etc/edgar-8k-labels.env
+WorkingDirectory=/opt/edgar-8k-labels
+ExecStart=/opt/edgar-8k-labels/scripts/run-ingest.sh
+TimeoutStartSec=1h
+SyslogIdentifier=edgar-8k-labels-ingest
+ReadWritePaths=/var/lib/edgar-8k-labels /var/lib/state-capture/announce -/run/state
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true

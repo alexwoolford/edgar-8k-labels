@@ -1,0 +1,12 @@
+[Unit]
+Description=EDGAR 8-K item labels daily ingest
+Documentation=file:///opt/edgar-8k-labels/docs/DAILY_OPS.md
+
+[Timer]
+OnCalendar=*-*-* 07:30:00 UTC
+Persistent=true
+RandomizedDelaySec=15m
+Unit=edgar-8k-labels-ingest.service
+
+[Install]
+WantedBy=timers.target
