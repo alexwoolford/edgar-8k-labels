@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
-use chrono::{Days, NaiveDate, Utc};
+use chrono::{Datelike, Days, NaiveDate, Utc, Weekday};
 
 use crate::db::{upsert_filing, upsert_run, FilingRow, WorkDb};
 use crate::http::{filing_url, submissions_url, Fetcher, TICKERS_URL};
@@ -38,7 +38,12 @@ pub fn ingest_day(
     };
 
     let idx_resp = fetcher.get(&index_url).context("GET master index")?;
-    if idx_resp.status == 404 {
+    if index_absent_is_ok(date, idx_resp.status) {
+        tracing::info!(
+            status = idx_resp.status,
+            date = %as_of,
+            "index missing; closed market"
+        );
         stats.status = "ok".into();
         finish(db, &as_of, started, &stats)?;
         return Ok(stats);
@@ -218,6 +223,16 @@ fn submissions_items(
     }
 }
 
+/// Missing daily index: 404 always, or 403 on Sat/Sun UTC (OCI often 403s
+/// unpublished weekend paths instead of 404). Weekday 403 is still an error.
+fn index_absent_is_ok(date: NaiveDate, status: u16) -> bool {
+    match status {
+        404 => true,
+        403 => matches!(date.weekday(), Weekday::Sat | Weekday::Sun),
+        _ => false,
+    }
+}
+
 fn accession_from_filename(filename: &str) -> String {
     let base = filename.rsplit('/').next().unwrap_or(filename);
     let stem = base.strip_suffix(".txt").unwrap_or(base);
@@ -329,6 +344,48 @@ mod tests {
         let run = last_run(&t.db).unwrap().unwrap();
         assert_eq!(run.status, "ok");
         assert_eq!(run.as_of_date, "2026-09-12");
+    }
+
+    #[test]
+    fn weekend_403_is_ok_zero_filings() {
+        let mut t = test_db();
+        let date = NaiveDate::from_ymd_opt(2026, 9, 12).unwrap();
+        let url = master_index_url(date);
+        let mut fetcher = MapFetcher {
+            urls: HashMap::from([(
+                url,
+                HttpResponse {
+                    status: 403,
+                    body: "forbidden".into(),
+                },
+            )]),
+        };
+        let stats = ingest_day(&mut t.db, date, &mut fetcher).unwrap();
+        assert_eq!(stats.status, "ok");
+        assert_eq!(stats.filings_seen, 0);
+        let run = last_run(&t.db).unwrap().unwrap();
+        assert_eq!(run.status, "ok");
+    }
+
+    #[test]
+    fn weekday_403_is_error() {
+        let mut t = test_db();
+        let date = NaiveDate::from_ymd_opt(2026, 9, 11).unwrap();
+        let url = master_index_url(date);
+        let mut fetcher = MapFetcher {
+            urls: HashMap::from([(
+                url,
+                HttpResponse {
+                    status: 403,
+                    body: "forbidden".into(),
+                },
+            )]),
+        };
+        let err = ingest_day(&mut t.db, date, &mut fetcher).unwrap_err();
+        assert!(err.to_string().contains("HTTP 403"));
+        let run = last_run(&t.db).unwrap().unwrap();
+        assert_eq!(run.status, "error");
+        assert_eq!(run.as_of_date, "2026-09-11");
     }
 
     #[test]

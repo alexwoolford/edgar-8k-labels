@@ -37,7 +37,7 @@ sudo ./deploy/install.sh
 
 Do not hand-edit sqlite.
 
-Weekend / US holiday master-index **404 is success** (`status=ok`, zero filings). Index 5xx after retries is `status=error` (unit failed). Some filings 403/404 with submissions fallback is `partial` (exit 0).
+Weekend / US holiday master-index **404 is success** (`status=ok`, zero filings). From this OCI IP an unpublished weekend path is often **403** rather than 404 — Sat/Sun 403 is the same success. Weekday index 403 is `status=error` (UA/Akamai). Index 5xx after retries is `status=error` (unit failed). Some filings 403/404 with submissions fallback is `partial` (exit 0).
 
 ## SEC fair access
 
