@@ -73,14 +73,7 @@ pub fn ingest_day(
     let mut submissions_cache: HashMap<String, String> = HashMap::new();
     let tx = db.unchecked_transaction()?;
     for row in &rows {
-        match resolve_filing(
-            &tx,
-            fetcher,
-            row,
-            &tickers,
-            &mut submissions_cache,
-            &mut stats,
-        ) {
+        match resolve_filing(fetcher, row, &tickers, &mut submissions_cache, &mut stats) {
             Ok(Some(filing)) => {
                 if upsert_filing(&tx, &filing)? {
                     stats.filings_upserted += 1;
@@ -156,7 +149,6 @@ fn load_tickers(fetcher: &mut dyn Fetcher) -> Result<HashMap<String, String>> {
 }
 
 fn resolve_filing(
-    _tx: &rusqlite::Transaction<'_>,
     fetcher: &mut dyn Fetcher,
     row: &IndexRow,
     tickers: &HashMap<String, String>,
@@ -300,7 +292,7 @@ pub fn ingest_range(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{last_run, lookup_filings, open_work, outbox_count};
+    use crate::db::{last_run, lookup_filings, open_work, outbox_count, DB_NAME};
     use crate::http::{HttpResponse, MapFetcher};
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -500,6 +492,21 @@ mod tests {
             )
             .unwrap();
         assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn db_name_and_announce_stem_match_repo() {
+        assert_eq!(DB_NAME, "edgar-8k-labels");
+        let _t = test_db();
+        let announce_dir = std::env::var("STATE_CAPTURE_ANNOUNCE_DIR").unwrap();
+        let announce = std::path::Path::new(&announce_dir).join(format!("{DB_NAME}.json"));
+        assert!(
+            announce.exists(),
+            "announce file missing: {}",
+            announce.display()
+        );
+        let body = std::fs::read_to_string(&announce).unwrap();
+        assert!(body.contains(DB_NAME), "announce body: {body}");
     }
 
     #[test]

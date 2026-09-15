@@ -30,7 +30,7 @@ impl DerefMut for WorkDb {
     }
 }
 
-pub fn open(path: &Path) -> Result<Connection> {
+fn open_conn(path: &Path) -> Result<Connection> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)
@@ -38,24 +38,17 @@ pub fn open(path: &Path) -> Result<Connection> {
         }
     }
     let conn = Connection::open(path).with_context(|| format!("open {}", path.display()))?;
-    conn.pragma_update(None, "journal_mode", "WAL")?;
-    conn.pragma_update(None, "synchronous", "NORMAL")?;
-    conn.pragma_update(None, "foreign_keys", "ON")?;
-    conn.busy_timeout(std::time::Duration::from_millis(5000))?;
+    apply_runtime_pragmas(&conn)?;
     apply_schema(&conn)?;
     Ok(conn)
 }
 
+pub fn open(path: &Path) -> Result<Connection> {
+    open_conn(path)
+}
+
 pub fn open_work(path: &Path) -> Result<WorkDb> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("create {}", parent.display()))?;
-        }
-    }
-    let conn = Connection::open(path).with_context(|| format!("open work {}", path.display()))?;
-    apply_runtime_pragmas(&conn)?;
-    apply_schema(&conn)?;
+    let conn = open_conn(path)?;
     let nudge = install_capture(&conn, path)?;
     Ok(WorkDb { conn, nudge })
 }
