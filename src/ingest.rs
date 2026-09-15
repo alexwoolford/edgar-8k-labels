@@ -251,6 +251,52 @@ pub fn default_as_of() -> NaiveDate {
         .expect("yesterday")
 }
 
+/// Inclusive UTC calendar days `[from, to]`.
+pub fn inclusive_days(from: NaiveDate, to: NaiveDate) -> Result<Vec<NaiveDate>> {
+    if from > to {
+        anyhow::bail!("--from {from} is after --to {to}");
+    }
+    let mut days = Vec::new();
+    let mut d = from;
+    loop {
+        days.push(d);
+        if d == to {
+            return Ok(days);
+        }
+        d = d.succ_opt().context("date overflow")?;
+    }
+}
+
+/// CLI window: default yesterday, one `--date`, or `--from`/`--to` together.
+pub fn ingest_dates(
+    date: Option<&str>,
+    from: Option<&str>,
+    to: Option<&str>,
+) -> Result<Vec<NaiveDate>> {
+    match (date, from, to) {
+        (None, None, None) => Ok(vec![default_as_of()]),
+        (Some(d), None, None) => Ok(vec![parse_as_of(d)?]),
+        (None, Some(f), Some(t)) => inclusive_days(parse_as_of(f)?, parse_as_of(t)?),
+        (Some(_), _, _) => anyhow::bail!("--date cannot be combined with --from/--to"),
+        _ => anyhow::bail!("--from and --to must both be set"),
+    }
+}
+
+/// Same-day upsert per UTC calendar day. Stops on weekday index 403 / transport error.
+pub fn ingest_range(
+    db: &mut WorkDb,
+    from: NaiveDate,
+    to: NaiveDate,
+    fetcher: &mut dyn Fetcher,
+) -> Result<Vec<IngestStats>> {
+    let mut out = Vec::new();
+    for day in inclusive_days(from, to)? {
+        tracing::info!(date = %day, "ingest day");
+        out.push(ingest_day(db, day, fetcher)?);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -480,5 +526,95 @@ mod tests {
         let mut hits = Vec::new();
         walk(&root, &mut hits);
         assert!(hits.is_empty(), "forbidden replace idiom in {hits:?}");
+    }
+
+    #[test]
+    fn ingest_dates_default_is_one_day() {
+        let days = ingest_dates(None, None, None).unwrap();
+        assert_eq!(days, vec![default_as_of()]);
+    }
+
+    #[test]
+    fn ingest_dates_from_to_inclusive() {
+        let days = ingest_dates(None, Some("2026-06-08"), Some("2026-06-10")).unwrap();
+        assert_eq!(
+            days,
+            vec![
+                NaiveDate::from_ymd_opt(2026, 6, 8).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 6, 9).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 6, 10).unwrap(),
+            ]
+        );
+    }
+
+    #[test]
+    fn ingest_dates_rejects_from_after_to() {
+        let err = ingest_dates(None, Some("2026-06-10"), Some("2026-06-08")).unwrap_err();
+        assert!(err.to_string().contains("after"));
+    }
+
+    #[test]
+    fn ingest_dates_rejects_date_with_range() {
+        let err =
+            ingest_dates(Some("2026-06-08"), Some("2026-06-08"), Some("2026-06-09")).unwrap_err();
+        assert!(err.to_string().contains("--date"));
+    }
+
+    #[test]
+    fn ingest_dates_requires_both_from_and_to() {
+        let err = ingest_dates(None, Some("2026-06-08"), None).unwrap_err();
+        assert!(err.to_string().contains("--from"));
+    }
+
+    #[test]
+    fn ingest_range_weekend_then_weekday() {
+        let mut t = test_db();
+        let fri = NaiveDate::from_ymd_opt(2026, 9, 11).unwrap();
+        let sat = NaiveDate::from_ymd_opt(2026, 9, 12).unwrap();
+        let mut fetcher = fixture_fetcher();
+        fetcher.urls.insert(
+            master_index_url(sat),
+            HttpResponse {
+                status: 404,
+                body: "not found".into(),
+            },
+        );
+        let stats = ingest_range(&mut t.db, fri, sat, &mut fetcher).unwrap();
+        assert_eq!(stats.len(), 2);
+        assert_eq!(stats[0].status, "ok");
+        assert_eq!(stats[0].filings_seen, 2);
+        assert_eq!(stats[1].status, "ok");
+        assert_eq!(stats[1].filings_seen, 0);
+        assert_eq!(lookup_filings(&t.db, "AAPL").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn ingest_range_stops_on_weekday_403() {
+        let mut t = test_db();
+        let fri = NaiveDate::from_ymd_opt(2026, 9, 11).unwrap();
+        let sat = NaiveDate::from_ymd_opt(2026, 9, 12).unwrap();
+        let mut fetcher = MapFetcher {
+            urls: HashMap::from([
+                (
+                    master_index_url(fri),
+                    HttpResponse {
+                        status: 403,
+                        body: "forbidden".into(),
+                    },
+                ),
+                (
+                    master_index_url(sat),
+                    HttpResponse {
+                        status: 404,
+                        body: "not found".into(),
+                    },
+                ),
+            ]),
+        };
+        let err = ingest_range(&mut t.db, fri, sat, &mut fetcher).unwrap_err();
+        assert!(err.to_string().contains("HTTP 403"));
+        let run = last_run(&t.db).unwrap().unwrap();
+        assert_eq!(run.as_of_date, "2026-09-11");
+        assert_eq!(run.status, "error");
     }
 }

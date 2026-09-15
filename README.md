@@ -7,6 +7,7 @@ Production is a systemd oneshot on Linux (`deploy/install.sh`). Capture contract
 ```bash
 export SEC_USER_AGENT='edgar-8k-labels you@real-domain'
 cargo run --release -- ingest --date 2026-09-11
+cargo run --release -- ingest --from 2026-06-08 --to 2026-09-13
 cargo run --release -- status
 cargo run --release -- lookup AAPL
 ```

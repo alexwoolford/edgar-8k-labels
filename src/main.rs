@@ -5,7 +5,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use edgar_8k_labels::db::{last_run, lookup_filings, open, open_work};
 use edgar_8k_labels::http::{validate_sleep, LiveFetcher, DEFAULT_SLEEP_SECS};
-use edgar_8k_labels::ingest::{default_as_of, ingest_day, parse_as_of};
+use edgar_8k_labels::ingest::{ingest_dates, ingest_day};
 use edgar_8k_labels::sec_ua::validate_user_agent;
 
 #[derive(Parser)]
@@ -29,11 +29,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Fetch one UTC day's master index and upsert 8-K / 8-K/A headers
+    /// Fetch master index day(s) and upsert 8-K / 8-K/A headers
     Ingest {
-        /// UTC calendar day (default: yesterday UTC)
+        /// UTC calendar day (default: yesterday UTC). Conflicts with --from/--to.
         #[arg(long)]
         date: Option<String>,
+        /// Inclusive UTC start day. Requires --to.
+        #[arg(long, conflicts_with = "date", requires = "to")]
+        from: Option<String>,
+        /// Inclusive UTC end day. Requires --from.
+        #[arg(long, conflicts_with = "date", requires = "from")]
+        to: Option<String>,
         #[arg(long, env = "EDGAR_SLEEP_SECS", default_value_t = DEFAULT_SLEEP_SECS)]
         sleep: f64,
         #[arg(long, env = "SEC_USER_AGENT")]
@@ -67,29 +73,35 @@ fn run() -> Result<ExitCode> {
     match cli.command {
         Command::Ingest {
             date,
+            from,
+            to,
             sleep,
             sec_user_agent,
         } => {
             validate_sleep(sleep)?;
             let ua = validate_user_agent(sec_user_agent.as_deref().unwrap_or(""))?;
-            let day = match date {
-                Some(s) => parse_as_of(&s)?,
-                None => default_as_of(),
-            };
+            let days = ingest_dates(date.as_deref(), from.as_deref(), to.as_deref())?;
             let mut db = open_work(&cli.db)?;
             let mut fetcher = LiveFetcher::new(&ua, sleep)?;
-            let stats = ingest_day(&mut db, day, &mut fetcher)?;
-            tracing::info!(
-                date = %day,
-                status = %stats.status,
-                seen = stats.filings_seen,
-                upserted = stats.filings_upserted,
-                failed = stats.filings_failed,
-                txt_ok = stats.txt_ok,
-                submissions_fallback = stats.submissions_fallback,
-                "ingest finished"
-            );
-            if stats.status == "error" {
+            let mut any_error = false;
+            for day in days {
+                tracing::info!(date = %day, "ingest day");
+                let stats = ingest_day(&mut db, day, &mut fetcher)?;
+                tracing::info!(
+                    date = %day,
+                    status = %stats.status,
+                    seen = stats.filings_seen,
+                    upserted = stats.filings_upserted,
+                    failed = stats.filings_failed,
+                    txt_ok = stats.txt_ok,
+                    submissions_fallback = stats.submissions_fallback,
+                    "ingest finished"
+                );
+                if stats.status == "error" {
+                    any_error = true;
+                }
+            }
+            if any_error {
                 Ok(ExitCode::from(1))
             } else {
                 Ok(ExitCode::SUCCESS)

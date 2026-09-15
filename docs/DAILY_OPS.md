@@ -39,6 +39,21 @@ Do not hand-edit sqlite.
 
 Weekend / US holiday master-index **404 is success** (`status=ok`, zero filings). From this OCI IP an unpublished weekend path is often **403** rather than 404 — Sat/Sun 403 is the same success. Weekday index 403 is `status=error` (UA/Akamai). Index 5xx after retries is `status=error` (unit failed). Some filings 403/404 with submissions fallback is `partial` (exit 0).
 
+## Backfill (`--from` / `--to`)
+
+Same per-day function as the timer: one master index per UTC calendar day, same sleep / UA, weekend 404/Sat-Sun 403 = `ok`. Weekday 403 **stops** the loop (already-upserted days stay). Do not snapshot the work db.
+
+Do **not** raise the nightly `TimeoutStartSec=1h` for this. A trips-overlap window (2026-06-08 → yesterday) is hours at 0.5s sleep. Run the binary (or `run-ingest.sh`) outside the timer:
+
+```bash
+sudo -u edgar env \
+  EDGAR_INGEST_FROM=2026-06-08 \
+  EDGAR_INGEST_TO=2026-09-13 \
+  /opt/edgar-8k-labels/scripts/run-ingest.sh
+```
+
+`EDGAR_INGEST_DATE` cannot combine with `FROM`/`TO`. Start with a short window; a multi-year pull is a later oneshot.
+
 ## SEC fair access
 
 Official: [Accessing EDGAR Data](https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data).

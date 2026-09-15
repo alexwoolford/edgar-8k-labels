@@ -25,7 +25,7 @@ These are **labels**, not leads. Item 2.01 is the disclosure, not a mosaic-gener
 
 Do not `collect --snapshot` this database.
 
-A missing daily `master.YYYYMMDD.idx` is 404, or 403 on Sat/Sun from this OCI IP. Both are an empty successful ingest, not a UA failure. Weekday index 403 is an error.
+`--from` / `--to` loops the same per-day upsert (resume-safe). A missing daily `master.YYYYMMDD.idx` is 404, or 403 on Sat/Sun from this OCI IP. Both are an empty successful ingest, not a UA failure. Weekday index 403 is an error and stops a range.
 
 ## Clocks
 
